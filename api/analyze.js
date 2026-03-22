@@ -1,19 +1,47 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    return res.status(405).json({ success: false, error: "POST only" });
+    return res.status(405).json({
+      success: false,
+      error: "POST only"
+    });
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
+
   if (!apiKey) {
-    return res.status(500).json({ success: false, error: "API key not configured" });
+    return res.status(500).json({
+      success: false,
+      error: "ANTHROPIC_API_KEY non configurée dans Vercel"
+    });
   }
 
   try {
-    const { text } = req.body || {};
+    const { text, title, location, filled } = req.body || {};
 
     if (!text || !String(text).trim()) {
-      return res.status(400).json({ success: false, error: "Text is required" });
+      return res.status(400).json({
+        success: false,
+        error: "Le champ text est requis"
+      });
     }
+
+    const prompt = `
+Corrige cette note de mission en français professionnel.
+Reste très concis.
+Ne change pas le sens.
+Retourne uniquement le texte corrigé.
+N'ajoute aucun titre.
+N'ajoute aucun markdown.
+N'ajoute aucune explication.
+
+Contexte :
+- Mission : ${title || ""}
+- Lieu : ${location || ""}
+- Sections déjà remplies : ${filled || "aucune"}
+
+Note :
+${text}
+`.trim();
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -24,17 +52,18 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 300,
+        max_tokens: 120,
         messages: [
           {
             role: "user",
-            content: `Corrige cette note de mission en français professionnel, sans changer le sens :\n\n${text}`
+            content: prompt
           }
         ]
       })
     });
 
     const rawResponse = await response.text();
+
     console.log("Anthropic status:", response.status);
     console.log("Anthropic raw response:", rawResponse);
 
@@ -65,7 +94,10 @@ export default async function handler(req, res) {
     }
 
     const improvedText =
-      data?.content?.map(item => item.text || "").join("").trim() || text;
+      data?.content
+        ?.map(item => item?.text || "")
+        .join("")
+        .trim() || text;
 
     return res.status(200).json({
       success: true,
@@ -74,6 +106,7 @@ export default async function handler(req, res) {
 
   } catch (err) {
     console.error("AI error:", err);
+
     return res.status(500).json({
       success: false,
       error: "AI processing failed",
