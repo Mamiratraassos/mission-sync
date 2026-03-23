@@ -286,7 +286,7 @@ function MissionChat({user,missionId,onBack}){
     }
     setBusy(false);
   };
-
+  const delMsg=async(id)=>{if(!confirm("Supprimer ce message ?"))return;await dbDel("messages/"+missionId+"/"+id)};
   const saveSec=async(k,v)=>{const n={...rptRef.current,[k]:v};rptRef.current=n;await dbSet("reports/"+missionId,n)};
   const saveCfg=async nc=>{cfgRef.current=nc;await dbSet("missions/"+missionId+"/config",nc)};
   const filled=SECTIONS.filter(s=>rpt[s.key]);const prog=Math.round(filled.length/SECTIONS.length*100);
@@ -313,7 +313,7 @@ function MissionChat({user,missionId,onBack}){
         {msgs.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:C.txtM}}><div style={{fontSize:36,marginBottom:8}}>💬</div><div style={{fontSize:13,fontWeight:600,color:C.txtD}}>Début de la mission</div></div>}
         {msgs.map(m=>{const me=m.sender===user.role;const uc=UC[m.sender]||UC.A;return<div key={m.id} style={{marginBottom:9,animation:"fadeUp .3s ease"}}>
           {!me&&<div style={{fontSize:9.5,fontWeight:600,color:uc.ac,marginBottom:2,marginLeft:4}}>{m.senderName}</div>}
-          <div style={{display:"flex",justifyContent:me?"flex-end":"flex-start"}}><div style={{background:uc.bg,borderRadius:me?"12px 12px 3px 12px":"12px 12px 12px 3px",padding:"8px 11px",maxWidth:"80%",fontSize:12.5,lineHeight:1.5}}>{m.text}<div style={{fontSize:8.5,color:"rgba(255,255,255,0.2)",marginTop:2,textAlign:me?"right":"left",display:"flex",alignItems:"center",justifyContent:me?"flex-end":"flex-start",gap:3}}>{new Date(m.time).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}{me&&sI(m.status)}</div></div></div>
+          <div style={{display:"flex",justifyContent:me?"flex-end":"flex-start"}}><div style={{background:uc.bg,borderRadius:me?"12px 12px 3px 12px":"12px 12px 12px 3px",padding:"8px 11px",maxWidth:"80%",fontSize:12.5,lineHeight:1.5}}>{m.text}<div style={{fontSize:8.5,color:"rgba(255,255,255,0.2)",marginTop:2,textAlign:me?"right":"left",display:"flex",alignItems:"center",justifyContent:me?"flex-end":"flex-start",gap:3}}>{new Date(m.time).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}{me&&sI(m.status)}{<span onClick={(e)=>{e.stopPropagation();delMsg(m.id)}} style={{marginLeft:4,cursor:"pointer",opacity:0.3,fontSize:10}}>🗑</span>}</div></div></div>
           {m.status==="done"&&<div style={{display:"flex",justifyContent:me?"flex-end":"flex-start",marginTop:3}}><div style={{background:"rgba(255,255,255,0.02)",border:"1px solid "+C.brdG,borderRadius:9,padding:"5px 9px",maxWidth:"85%",fontSize:11}}><div style={{color:"#b0a99e",lineHeight:1.4}}><span style={{color:C.gold,fontWeight:600}}>✓ </span>{m.corrected}</div><div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:3,background:C.goldD,borderRadius:6,padding:"1px 6px",fontSize:9.5,color:C.gold,fontWeight:500}}>{gI(m.section)+" "+gL(m.section)}</div></div></div>}
           {m.status==="processing"&&<div style={{display:"flex",justifyContent:me?"flex-end":"flex-start",marginTop:3}}><div style={{background:"rgba(255,255,255,0.02)",border:"1px solid "+C.brdG,borderRadius:9,padding:"4px 9px",fontSize:10.5,color:C.gold}}><span style={{animation:"pulse 1.2s infinite"}}>● </span>Analyse...</div></div>}
         </div>})}
