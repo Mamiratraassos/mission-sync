@@ -31,118 +31,114 @@ textarea::placeholder,input::placeholder{color:#3e3b34}
 <script type="text/babel">
 const {useState,useRef,useEffect,useCallback}=React;
 
-const SECTIONS=[
-  {key:"contexte",label:"Contexte de la mission",icon:"📋",num:"I"},
-  {key:"objectifs",label:"Objectifs",icon:"🎯",num:"II"},
-  {key:"activites",label:"Activités réalisées",icon:"⚙️",num:"III"},
-  {key:"observations",label:"Observations & Constats",icon:"👁️",num:"IV"},
-  {key:"resultats",label:"Résultats obtenus",icon:"📊",num:"V"},
-  {key:"recommandations",label:"Recommandations",icon:"💡",num:"VI"},
-  {key:"prochaines_etapes",label:"Prochaines étapes",icon:"➡️",num:"VII"},
-  {key:"divers",label:"Notes diverses",icon:"📝",num:"VIII"},
-];
-const EMPTY_RPT=Object.fromEntries(SECTIONS.map(s=>[s.key,""]));
+// ═══ TWO REPORT TEMPLATES ═══
+const TEMPLATES={
+  visite:[
+    {key:"contexte",label:"Contexte de la mission",icon:"📋",num:"I"},
+    {key:"objectifs",label:"Objectifs",icon:"🎯",num:"II"},
+    {key:"activites",label:"Activités réalisées",icon:"⚙️",num:"III"},
+    {key:"observations",label:"Observations & Constats",icon:"👁️",num:"IV"},
+    {key:"resultats",label:"Résultats obtenus",icon:"📊",num:"V"},
+    {key:"recommandations",label:"Recommandations",icon:"💡",num:"VI"},
+    {key:"prochaines_etapes",label:"Prochaines étapes",icon:"➡️",num:"VII"},
+    {key:"divers",label:"Notes diverses",icon:"📝",num:"VIII"},
+  ],
+  hebdo:[
+    {key:"contexte_general",label:"Contexte général",icon:"🌍",num:"1.1"},
+    {key:"contexte_regional",label:"Contexte régional / Sécurité",icon:"📍",num:"1.2"},
+    {key:"med_epidemio",label:"MED — Données épidémiologiques",icon:"🦠",num:"2.1"},
+    {key:"med_projets",label:"MED — Projets médicaux",icon:"🏥",num:"2.2"},
+    {key:"ops_projet1",label:"OPS — Projet 1",icon:"⚙️",num:"3.1"},
+    {key:"ops_projet2",label:"OPS — Projet 2",icon:"⚙️",num:"3.2"},
+    {key:"ops_projet3",label:"OPS — Projet 3",icon:"⚙️",num:"3.3"},
+    {key:"actions_cles",label:"Actions clés semaine prochaine",icon:"✅",num:"4"},
+    {key:"divers",label:"Divers / Notes",icon:"📝",num:"5"},
+  ],
+};
+const TEMPLATE_LABELS={visite:"Rapport de visite",hebdo:"Update hebdomadaire"};
+
+function getSections(type){return TEMPLATES[type]||TEMPLATES.visite}
+function emptyReport(type){return Object.fromEntries(getSections(type).map(s=>[s.key,""]))}
+
 const C={bg:"#080c14",srf:"#101828",srfAlt:"#182035",gold:"#d4a44a",goldL:"#ebd08a",goldD:"rgba(212,164,74,0.10)",txt:"#ede9e0",txtD:"#8a8678",txtM:"#3e3b34",grn:"#22c55e",grnD:"rgba(34,197,94,0.12)",red:"#ef4444",org:"#f59e0b",orgD:"rgba(245,158,11,0.12)",brd:"rgba(255,255,255,0.05)",brdG:"rgba(212,164,74,0.13)"};
 const UC={A:{bg:"linear-gradient(135deg,#1e3a5f,#152640)",ac:"#5b9bd5"},B:{bg:"linear-gradient(135deg,#2d1f4e,#1c1340)",ac:"#a78bfa"}};
 
-// ═══ Firebase DB ═══
+// ═══ Firebase ═══
 let db=null;
-async function initFirebase(){
-  if(db)return db;
-  try{
-    const res=await fetch("/api/config");
-    const cfg=await res.json();
-    if(!cfg.apiKey){console.error("No Firebase config");return null}
-    const app=firebase.initializeApp(cfg);
-    db=firebase.database();
-    return db;
-  }catch(e){console.error("Firebase init error:",e);return null}
-}
+async function initFB(){if(db)return db;try{const r=await fetch("/api/config");const c=await r.json();if(!c.apiKey)return null;firebase.initializeApp(c);db=firebase.database();return db}catch{return null}}
+async function dbGet(p){const d=await initFB();if(!d)return null;try{const s=await d.ref(p).get();return s.exists()?s.val():null}catch{return null}}
+async function dbSet(p,v){const d=await initFB();if(!d)return;try{await d.ref(p).set(v)}catch{}}
+async function dbDel(p){const d=await initFB();if(!d)return;try{await d.ref(p).remove()}catch{}}
+function dbOn(p,cb){initFB().then(d=>{if(d)d.ref(p).on("value",s=>{cb(s.exists()?s.val():null)})});return()=>{initFB().then(d=>{if(d)d.ref(p).off("value")})}}
 
-async function dbGet(path){
-  const d=await initFirebase();if(!d)return null;
-  try{const snap=await d.ref(path).get();return snap.exists()?snap.val():null}catch{return null}
-}
-async function dbSet(path,val){
-  const d=await initFirebase();if(!d)return false;
-  try{await d.ref(path).set(val);return true}catch{return false}
-}
-async function dbDel(path){
-  const d=await initFirebase();if(!d)return;
-  try{await d.ref(path).remove()}catch{}
-}
-function dbListen(path,cb){
-  initFirebase().then(d=>{if(d)d.ref(path).on("value",snap=>{cb(snap.exists()?snap.val():null)})});
-  return()=>{initFirebase().then(d=>{if(d)d.ref(path).off("value")})};
-}
-
-// ═══ AI call via server ═══
-async function callAI(text,report,config){
-  const filled=SECTIONS.filter(s=>report[s.key]).map(s=>s.key).join(",");
-  const res=await fetch("/api/analyze",{
-    method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({text,title:config.title,location:config.location,filled})
-  });
-  if(!res.ok)throw new Error("AI failed");
-  return await res.json();
+// ═══ AI ═══
+async function callAI(text,report,config,sections){
+  const filled=sections.filter(s=>report[s.key]).map(s=>s.key).join(",");
+  const sectionKeys=sections.map(s=>s.key).join("|");
+  const r=await fetch("/api/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,title:config.title,location:config.location,filled,sectionKeys})});
+  if(!r.ok)throw new Error("AI failed: "+r.status);
+  return await r.json();
 }
 
 // ═══ Export Word ═══
-function ExportBtn({config,report}){
+function ExportBtn({config,report,type}){
   const[url,setUrl]=useState(null);const[fname,setFname]=useState("");
-  const filled=SECTIONS.filter(s=>report[s.key]);
+  const sections=getSections(type);const filled=sections.filter(s=>report[s.key]);
   const generate=()=>{
     if(!filled.length)return;
     const today=new Date().toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});
     const mDate=new Date(config.date).toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});
     const e=t=>(t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const isHebdo=type==="hebdo";
+    const headerTitle=isHebdo?"UPDATE HEBDOMADAIRE":"RAPPORT DE MISSION";
+    const headerSub=isHebdo?e(config.title)+" | Semaine du "+mDate:e(config.title);
     let body="";
-    SECTIONS.forEach(s=>{if(!report[s.key])return;const ps=report[s.key].split("\n").filter(p=>p.trim()).map(p=>"<p style='font-size:11pt;line-height:1.7;color:#333;margin:4pt 0 8pt;text-align:justify'>"+e(p)+"</p>").join("");body+="<h2 style='font-size:13pt;color:#1a3a5c;font-family:Calibri;border-bottom:2pt solid #c4922e;padding-bottom:4pt;margin-top:20pt;text-transform:uppercase'>"+s.num+". "+e(s.label)+"</h2>"+ps});
-    const html="<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><style>@page{size:A4;margin:2.5cm 2cm}body{font-family:Calibri,sans-serif;font-size:11pt;color:#2c2c2c}table.t{width:100%;border-collapse:collapse;margin:10pt 0 16pt}table.t td{border:0.5pt solid #bbb;padding:6pt 10pt;font-size:10pt}table.t td.l{background:#e8e0d0;font-weight:bold;width:35%;color:#1a3a5c}</style></head><body><div style='background:#1a3a5c;padding:20pt 24pt;margin:-10pt -5pt 16pt -5pt'><p style='font-size:22pt;color:white;font-weight:bold;margin:0'>RAPPORT DE MISSION</p><p style='font-size:11pt;color:#c4922e;margin:4pt 0 0;text-transform:uppercase'>"+e(config.title)+"</p></div><table class='t'><tr><td class='l'>Mission</td><td>"+e(config.title)+"</td></tr><tr><td class='l'>Date</td><td>"+mDate+"</td></tr><tr><td class='l'>Lieu</td><td>"+e(config.location||"\u2014")+"</td></tr><tr><td class='l'>Rapport</td><td>"+today+"</td></tr></table><hr style='border:none;border-top:2pt solid #c4922e;margin:14pt 0'>"+body+"</body></html>";
+    sections.forEach(s=>{if(!report[s.key])return;const ps=report[s.key].split("\n").filter(p=>p.trim()).map(p=>"<p style='font-size:11pt;line-height:1.7;color:#333;margin:4pt 0 8pt;text-align:justify'>"+e(p)+"</p>").join("");body+="<h2 style='font-size:13pt;color:#1a3a5c;font-family:Calibri;border-bottom:2pt solid "+(isHebdo?"#c0392b":"#c4922e")+";padding-bottom:4pt;margin-top:20pt;text-transform:uppercase'>"+s.num+". "+e(s.label)+"</h2>"+ps});
+    const accentColor=isHebdo?"#c0392b":"#c4922e";
+    const html="<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'><head><meta charset='utf-8'><style>@page{size:A4;margin:2.5cm 2cm}body{font-family:Calibri,sans-serif;font-size:11pt;color:#2c2c2c}table.t{width:100%;border-collapse:collapse;margin:10pt 0 16pt}table.t td{border:0.5pt solid #bbb;padding:6pt 10pt;font-size:10pt}table.t td.l{background:#e8e0d0;font-weight:bold;width:35%;color:#1a3a5c}</style></head><body><div style='background:#1a3a5c;padding:20pt 24pt;margin:-10pt -5pt 16pt -5pt'><p style='font-size:22pt;color:white;font-weight:bold;margin:0'>"+headerTitle+"</p><p style='font-size:11pt;color:"+accentColor+";margin:4pt 0 0;text-transform:uppercase'>"+headerSub+"</p></div><table class='t'><tr><td class='l'>"+TEMPLATE_LABELS[type]+"</td><td>"+e(config.title)+"</td></tr><tr><td class='l'>Date</td><td>"+mDate+"</td></tr><tr><td class='l'>Lieu</td><td>"+e(config.location||"\u2014")+"</td></tr><tr><td class='l'>Rapport</td><td>"+today+"</td></tr></table><hr style='border:none;border-top:2pt solid "+accentColor+";margin:14pt 0'>"+body+"</body></html>";
     const b64=btoa(unescape(encodeURIComponent(html)));
     setUrl("data:application/msword;base64,"+b64);
-    setFname("Rapport-"+(config.title||"mission").replace(/[^a-zA-Z0-9\u00C0-\u024F ]/g,"").replace(/\s+/g,"-")+".doc");
+    const prefix=isHebdo?"Hebdo":"Rapport";
+    setFname(prefix+"-"+(config.title||"mission").replace(/[^a-zA-Z0-9\u00C0-\u024F ]/g,"").replace(/\s+/g,"-")+".doc");
   };
   if(!filled.length)return null;
   return(<div style={{textAlign:"center",marginTop:14,marginBottom:14}}>
-    {!url?<button onClick={generate} style={{padding:"12px 24px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",minWidth:220}}>📝 Préparer le rapport Word</button>
+    {!url?<button onClick={generate} style={{padding:"12px 24px",borderRadius:10,border:"none",background:"linear-gradient(135deg,#2563eb,#1d4ed8)",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",minWidth:220}}>{"📝 Préparer le "+TEMPLATE_LABELS[type]}</button>
     :<div style={{animation:"fadeUp .3s ease"}}>
-      <a href={url} download={fname} style={{display:"inline-block",padding:"14px 28px",borderRadius:10,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",fontSize:13,fontWeight:700,textDecoration:"none"}}>⬇ Télécharger {fname}</a>
-      <div style={{marginTop:8}}><button onClick={()=>{setUrl(null);setTimeout(generate,100)}} style={{padding:"7px 14px",borderRadius:8,border:"1px solid "+C.brd,background:"rgba(255,255,255,0.03)",color:C.txtD,fontSize:11,cursor:"pointer"}}>🔄 Regénérer</button></div>
+      <a href={url} download={fname} style={{display:"inline-block",padding:"14px 28px",borderRadius:10,background:"linear-gradient(135deg,#16a34a,#15803d)",color:"#fff",fontSize:13,fontWeight:700,textDecoration:"none"}}>{"⬇ "+fname}</a>
+      <div style={{marginTop:8}}><button onClick={()=>{setUrl(null);setTimeout(generate,100)}} style={{padding:"7px 14px",borderRadius:8,border:"1px solid "+C.brd,background:"rgba(255,255,255,0.03)",color:C.txtD,fontSize:11,cursor:"pointer"}}>{"🔄 Regénérer"}</button></div>
     </div>}
   </div>);
 }
 
 // ═══ Word Preview ═══
-function WordPreview({config,report,messages}){
+function WordPreview({config,report,messages,type}){
+  const sections=getSections(type);const filled=sections.filter(s=>report[s.key]);
   const today=new Date().toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});
   const mDate=new Date(config.date).toLocaleDateString("fr-FR",{day:"numeric",month:"long",year:"numeric"});
-  const filled=SECTIONS.filter(s=>report[s.key]);
+  const isHebdo=type==="hebdo";const accent=isHebdo?"#c0392b":"#c4922e";
   return(<div style={{padding:12,minHeight:"100%"}}>
     <div style={{background:"#fff",borderRadius:4,maxWidth:460,margin:"0 auto",boxShadow:"0 2px 20px rgba(0,0,0,0.4)",color:"#1a1a1a",fontFamily:"Cambria,Georgia,serif",fontSize:11,lineHeight:1.55,overflow:"hidden"}}>
       <div style={{background:"linear-gradient(135deg,#1a3a5c,#15304d)",padding:"18px 24px 14px"}}>
-        <div style={{fontSize:9,letterSpacing:3,textTransform:"uppercase",color:"rgba(255,255,255,0.5)",fontFamily:"Calibri,sans-serif",marginBottom:6}}>Rapport de mission</div>
+        <div style={{fontSize:9,letterSpacing:3,textTransform:"uppercase",color:"rgba(255,255,255,0.5)",fontFamily:"Calibri,sans-serif",marginBottom:6}}>{isHebdo?"Update hebdomadaire":"Rapport de mission"}</div>
         <div style={{fontSize:19,fontWeight:700,color:"#fff",fontFamily:"Calibri,sans-serif"}}>{config.title}</div>
-        <div style={{marginTop:6,height:2.5,width:60,background:"linear-gradient(90deg,#c4922e,#e8c976)",borderRadius:2}}/>
+        {isHebdo&&<div style={{fontSize:11,color:"rgba(255,255,255,0.6)",marginTop:4,fontFamily:"Calibri,sans-serif"}}>{"Semaine du "+mDate}</div>}
+        <div style={{marginTop:6,height:2.5,width:60,background:"linear-gradient(90deg,"+accent+","+C.goldL+")",borderRadius:2}}/>
       </div>
       <div style={{padding:"20px 24px 24px"}}>
         <table style={{width:"100%",borderCollapse:"collapse",marginBottom:18,fontSize:10}}><tbody>
-          {[["Mission",config.title],["Date",mDate],["Lieu",config.location||"—"],["Rapport",today],["Notes",String(messages.length)]].map(([l,v],i)=><tr key={i}><td style={{padding:"6px 10px",width:"38%",background:i%2===0?"#f0ebe0":"#f7f3ec",fontWeight:600,color:"#1a3a5c",borderBottom:"1px solid #e0dbd0",fontFamily:"Calibri,sans-serif",fontSize:9.5}}>{l}</td><td style={{padding:"6px 10px",background:i%2===0?"#fafaf7":"#fff",borderBottom:"1px solid #e8e4dc",color:"#333",fontSize:10}}>{v}</td></tr>)}
+          {[[TEMPLATE_LABELS[type],config.title],["Date",mDate],["Lieu",config.location||"—"],["Rapport",today],["Notes",String(messages.length)]].map(([l,v],i)=><tr key={i}><td style={{padding:"6px 10px",width:"38%",background:i%2===0?"#f0ebe0":"#f7f3ec",fontWeight:600,color:"#1a3a5c",borderBottom:"1px solid #e0dbd0",fontFamily:"Calibri,sans-serif",fontSize:9.5}}>{l}</td><td style={{padding:"6px 10px",background:i%2===0?"#fafaf7":"#fff",borderBottom:"1px solid #e8e4dc",color:"#333",fontSize:10}}>{v}</td></tr>)}
         </tbody></table>
-        <div style={{height:2,background:"linear-gradient(90deg,#c4922e,#e8c976,#c4922e)",margin:"4px 0 18px"}}/>
-        {filled.length>1&&<div style={{marginBottom:18}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#1a3a5c",marginBottom:8,fontFamily:"Calibri,sans-serif",textTransform:"uppercase"}}>Table des matières</div>
-          {filled.map((s,i)=><div key={s.key} style={{display:"flex",alignItems:"baseline",padding:"3px 0",fontSize:10,color:"#555"}}><span style={{color:"#1a3a5c",fontWeight:600,minWidth:28}}>{s.num}.</span><span style={{flex:1}}>{s.label}</span><span style={{flex:1,borderBottom:"1px dotted #ccc",margin:"0 6px"}}/><span style={{color:"#999",fontSize:9}}>{i+1}</span></div>)}
-        </div>}
+        <div style={{height:2,background:"linear-gradient(90deg,"+accent+","+C.goldL+","+accent+")",margin:"4px 0 18px"}}/>
         {filled.length===0?<div style={{textAlign:"center",padding:"40px 20px",color:"#bbb",fontStyle:"italic"}}>Le rapport est vide.</div>
         :filled.map((s,idx)=><div key={s.key} style={{marginBottom:idx<filled.length-1?16:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,paddingBottom:5,marginBottom:8,borderBottom:"2px solid #c4922e"}}><span style={{fontSize:12,fontWeight:700,color:"#1a3a5c",fontFamily:"Calibri,sans-serif"}}>{s.num}.</span><span style={{fontSize:12,fontWeight:700,color:"#1a3a5c",textTransform:"uppercase",fontFamily:"Calibri,sans-serif"}}>{s.label}</span></div>
+          <div style={{display:"flex",alignItems:"center",gap:8,paddingBottom:5,marginBottom:8,borderBottom:"2px solid "+accent}}><span style={{fontSize:12,fontWeight:700,color:"#1a3a5c",fontFamily:"Calibri,sans-serif"}}>{s.num}.</span><span style={{fontSize:12,fontWeight:700,color:"#1a3a5c",textTransform:"uppercase",fontFamily:"Calibri,sans-serif"}}>{s.label}</span></div>
           {report[s.key].split("\n").filter(p=>p.trim()).map((p,pi)=><p key={pi} style={{margin:"0 0 7px",textAlign:"justify",color:"#2c2c2c",fontSize:10.5,lineHeight:1.65,textIndent:pi>0?20:0}}>{p}</p>)}
         </div>)}
         {filled.length>0&&<div style={{borderTop:"1px solid #e0dbd0",marginTop:20,paddingTop:10,display:"flex",justifyContent:"space-between",fontSize:8,color:"#aaa",fontStyle:"italic"}}><span>MissionSync</span><span>Page 1/1</span></div>}
       </div>
     </div>
-    <ExportBtn config={config} report={report}/>
+    <ExportBtn config={config} report={report} type={type}/>
   </div>);
 }
 
@@ -170,7 +166,7 @@ function Login({onLogin}){
   return(<div style={{height:"100dvh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"radial-gradient(ellipse at 25% 15%,rgba(212,164,74,0.05),#080c14 65%)",padding:28}}>
     <div style={{fontSize:44,marginBottom:8}}>📡</div>
     <div style={{fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:800,marginBottom:3}}>Mission Sync</div>
-    <div style={{fontSize:11,color:C.txtD,letterSpacing:3,textTransform:"uppercase",fontFamily:"'JetBrains Mono',monospace",marginBottom:36}}>Notes · IA · Rapport Word</div>
+    <div style={{fontSize:11,color:C.txtD,letterSpacing:3,textTransform:"uppercase",fontFamily:"'JetBrains Mono',monospace",marginBottom:36}}>Notes · IA · Rapport</div>
     {step==="name"?<div style={{width:"100%",maxWidth:310}}>
       <input value={nm} onChange={ev=>setNm(ev.target.value)} placeholder="Votre nom..." autoFocus onKeyDown={ev=>{if(ev.key==="Enter"&&nm.trim())setSt("role")}} style={{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.04)",border:"1px solid "+C.brdG,borderRadius:14,padding:"13px 16px",color:C.txt,fontSize:15,outline:"none",textAlign:"center",marginBottom:14}}/>
       <button disabled={!nm.trim()} onClick={()=>setSt("role")} style={{width:"100%",padding:"13px 0",borderRadius:14,border:"none",background:nm.trim()?"linear-gradient(135deg,"+C.gold+",#c4922e)":"rgba(255,255,255,0.03)",color:nm.trim()?C.bg:C.txtM,fontSize:14,fontWeight:700,cursor:nm.trim()?"pointer":"default"}}>Continuer</button>
@@ -185,78 +181,73 @@ function Login({onLogin}){
   </div>);
 }
 
-// ═══ Missions List — Firebase realtime ═══
+// ═══ Missions List ═══
 function MissionsList({user,onSelect,onLogout}){
   const[missions,setMissions]=useState([]);const[loading,setLoading]=useState(true);
   const[showNew,setShowNew]=useState(false);const[newT,setNewT]=useState("");const[newL,setNewL]=useState("");const[newD,setNewD]=useState(new Date().toISOString().slice(0,10));
+  const[newType,setNewType]=useState("visite");
 
-  useEffect(()=>{
-    const unsub=dbListen("missions",data=>{
-      if(!data){setMissions([]);setLoading(false);return}
-      const list=Object.entries(data).map(([id,d])=>({id,...d})).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
-      setMissions(list);setLoading(false);
-    });
-    return unsub;
-  },[]);
+  useEffect(()=>{const u=dbOn("missions",data=>{if(!data){setMissions([]);setLoading(false);return}const list=Object.entries(data).map(([id,d])=>({id,...d})).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));setMissions(list);setLoading(false)});return u},[]);
 
-  const create=async()=>{
-    if(!newT.trim())return;
-    const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-    await dbSet("missions/"+id,{config:{title:newT.trim(),location:newL.trim(),date:newD},createdAt:Date.now(),updatedAt:Date.now(),msgCount:0});
-    onSelect(id);
-  };
+  const create=async()=>{if(!newT.trim())return;const id=Date.now().toString(36)+Math.random().toString(36).slice(2,5);await dbSet("missions/"+id,{config:{title:newT.trim(),location:newL.trim(),date:newD,type:newType},createdAt:Date.now(),updatedAt:Date.now(),msgCount:0});onSelect(id)};
   const del=async(id,ev)=>{ev.stopPropagation();if(!confirm("Supprimer cette mission ?"))return;await dbDel("missions/"+id);await dbDel("messages/"+id);await dbDel("reports/"+id)};
 
   return(<div style={{height:"100dvh",display:"flex",flexDirection:"column",background:C.bg,color:C.txt,overflow:"hidden",maxWidth:480,margin:"0 auto",width:"100%"}}>
     <div style={{background:"linear-gradient(135deg,"+C.srf+",#0f1729)",borderBottom:"1px solid "+C.brdG,padding:"16px 16px 14px",flexShrink:0}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <div><div style={{fontSize:9,letterSpacing:3,color:C.gold,textTransform:"uppercase",fontFamily:"'JetBrains Mono',monospace",marginBottom:3}}>Mission Sync</div><div style={{fontSize:18,fontWeight:700}}>Mes Missions</div><div style={{fontSize:11,color:C.txtD,marginTop:2}}>{user.name+" · Tel "+user.role+" · "+missions.length+" mission(s)"}</div></div>
+        <div><div style={{fontSize:9,letterSpacing:3,color:C.gold,textTransform:"uppercase",fontFamily:"'JetBrains Mono',monospace",marginBottom:3}}>Mission Sync</div><div style={{fontSize:18,fontWeight:700}}>Mes Missions</div><div style={{fontSize:11,color:C.txtD,marginTop:2}}>{user.name+" · "+missions.length+" mission(s)"}</div></div>
         <button onClick={onLogout} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(239,68,68,0.15)",borderRadius:9,color:C.red,width:34,height:34,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12}}>⏻</button>
       </div>
     </div>
     <div style={{flex:1,overflow:"auto",padding:"12px 14px"}}>
       {showNew?<div style={{background:C.srfAlt,border:"1px solid "+C.gold,borderRadius:14,padding:16,marginBottom:14,animation:"slideDown .25s ease"}}>
         <div style={{fontSize:13,fontWeight:700,color:C.gold,marginBottom:12}}>Nouvelle mission</div>
-        {[{l:"Titre *",v:newT,s:setNewT,p:"Ex: Audit Région Nord"},{l:"Lieu",v:newL,s:setNewL,p:"Ex: Antananarivo"},{l:"Date",v:newD,s:setNewD,t:"date"}].map((f,i)=><div key={i} style={{marginBottom:10}}><label style={{fontSize:9,fontWeight:600,color:C.txtD,textTransform:"uppercase",letterSpacing:1,display:"block",marginBottom:3}}>{f.l}</label><input type={f.t||"text"} value={f.v} onChange={ev=>f.s(ev.target.value)} placeholder={f.p} style={{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.04)",border:"1px solid "+C.brdG,borderRadius:8,padding:"9px 12px",color:C.txt,fontSize:13,outline:"none"}}/></div>)}
+
+        {/* Type selector */}
+        <div style={{marginBottom:12}}>
+          <label style={{fontSize:9,fontWeight:600,color:C.txtD,textTransform:"uppercase",letterSpacing:1,display:"block",marginBottom:6}}>Type de rapport</label>
+          <div style={{display:"flex",gap:8}}>
+            {[{t:"visite",lb:"📋 Rapport de visite",ds:"Visite terrain, audit, inspection"},{t:"hebdo",lb:"📊 Update hebdo",ds:"Mise à jour hebdomadaire MSF"}].map(o=><button key={o.t} onClick={()=>setNewType(o.t)} style={{flex:1,padding:"12px 10px",borderRadius:10,border:newType===o.t?"2px solid "+C.gold:"1px solid "+C.brd,background:newType===o.t?C.goldD:"rgba(255,255,255,0.02)",color:newType===o.t?C.gold:C.txtD,cursor:"pointer",textAlign:"left"}}>
+              <div style={{fontSize:12,fontWeight:600}}>{o.lb}</div>
+              <div style={{fontSize:10,marginTop:3,color:C.txtM}}>{o.ds}</div>
+            </button>)}
+          </div>
+        </div>
+
+        {[{l:"Titre *",v:newT,s:setNewT,p:newType==="hebdo"?"Ex: MSF Madagascar S10":"Ex: Audit Région Nord"},{l:"Lieu",v:newL,s:setNewL,p:"Ex: Antananarivo"},{l:"Date",v:newD,s:setNewD,t:"date"}].map((f,i)=><div key={i} style={{marginBottom:10}}><label style={{fontSize:9,fontWeight:600,color:C.txtD,textTransform:"uppercase",letterSpacing:1,display:"block",marginBottom:3}}>{f.l}</label><input type={f.t||"text"} value={f.v} onChange={ev=>f.s(ev.target.value)} placeholder={f.p} style={{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.04)",border:"1px solid "+C.brdG,borderRadius:8,padding:"9px 12px",color:C.txt,fontSize:13,outline:"none"}}/></div>)}
         <div style={{display:"flex",gap:8}}><button onClick={create} disabled={!newT.trim()} style={{flex:1,padding:"11px 0",borderRadius:10,border:"none",background:newT.trim()?"linear-gradient(135deg,"+C.gold+",#c4922e)":"rgba(255,255,255,0.03)",color:newT.trim()?C.bg:C.txtM,fontSize:13,fontWeight:700,cursor:newT.trim()?"pointer":"default"}}>Créer</button><button onClick={()=>setShowNew(false)} style={{padding:"11px 18px",borderRadius:10,border:"1px solid "+C.brd,background:"rgba(255,255,255,0.03)",color:C.txtD,fontSize:13,cursor:"pointer"}}>Annuler</button></div>
       </div>
       :<button onClick={()=>setShowNew(true)} style={{width:"100%",padding:14,marginBottom:14,borderRadius:12,border:"2px dashed "+C.brdG,background:"rgba(212,164,74,0.04)",color:C.gold,fontSize:14,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>＋ Nouvelle mission</button>}
       {loading?<div style={{textAlign:"center",padding:40,color:C.txtD}}>Chargement...</div>
       :missions.length===0&&!showNew?<div style={{textAlign:"center",padding:"40px 20px",color:C.txtM}}><div style={{fontSize:40,marginBottom:10}}>📋</div>Aucune mission</div>
-      :missions.map(m=>{const mc=m.msgCount||0;return<div key={m.id} onClick={()=>onSelect(m.id)} style={{background:C.srfAlt,border:"1px solid "+C.brdG,borderRadius:14,padding:"14px 16px",marginBottom:10,cursor:"pointer",animation:"fadeUp .3s ease"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,marginBottom:3}}>{m.config?.title||"Sans titre"}</div><div style={{fontSize:11,color:C.txtD}}>{(m.config?.location?"📍 "+m.config.location+" · ":"")+"💬 "+mc+" note(s)"}</div></div><button onClick={ev=>del(m.id,ev)} style={{background:"none",border:"none",color:C.txtM,fontSize:16,cursor:"pointer",padding:"4px 8px"}}>🗑</button></div>
+      :missions.map(m=>{const mc=m.msgCount||0;const tp=m.config?.type||"visite";const badge=tp==="hebdo"?"📊":"📋";
+        return<div key={m.id} onClick={()=>onSelect(m.id)} style={{background:C.srfAlt,border:"1px solid "+C.brdG,borderRadius:14,padding:"14px 16px",marginBottom:10,cursor:"pointer",animation:"fadeUp .3s ease"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,marginBottom:3}}>{badge+" "+( m.config?.title||"Sans titre")}</div><div style={{fontSize:11,color:C.txtD}}>{TEMPLATE_LABELS[tp]+(m.config?.location?" · 📍 "+m.config.location:"")+" · 💬 "+mc}</div></div><button onClick={ev=>del(m.id,ev)} style={{background:"none",border:"none",color:C.txtM,fontSize:16,cursor:"pointer",padding:"4px 8px"}}>🗑</button></div>
       </div>})}
     </div>
   </div>);
 }
 
-// ═══ Mission Chat — Firebase realtime ═══
+// ═══ Mission Chat ═══
 function MissionChat({user,missionId,onBack}){
-  const[view,setView]=useState("chat");const[msgs,setMsgs]=useState([]);const[rpt,setRpt]=useState({...EMPTY_RPT});
-  const[cfg,setCfg]=useState({title:"",date:new Date().toISOString().slice(0,10),location:""});
+  const[view,setView]=useState("chat");const[msgs,setMsgs]=useState([]);const[rpt,setRpt]=useState({});
+  const[cfg,setCfg]=useState({title:"",date:new Date().toISOString().slice(0,10),location:"",type:"visite"});
   const[inp,setInp]=useState("");const[busy,setBusy]=useState(false);const[showCfg,setShowCfg]=useState(false);
   const[online,setOnline]=useState(true);const[otherP,setOtherP]=useState(null);
-  const endRef=useRef(null);const inpRef=useRef(null);const rptRef=useRef(rpt);
-  useEffect(()=>{rptRef.current=rpt},[rpt]);
-  const cfgRef=useRef(cfg);useEffect(()=>{cfgRef.current=cfg},[cfg]);
+  const endRef=useRef(null);const inpRef=useRef(null);const rptRef=useRef(rpt);const cfgRef=useRef(cfg);
+  useEffect(()=>{rptRef.current=rpt},[rpt]);useEffect(()=>{cfgRef.current=cfg},[cfg]);
+
+  const type=cfg.type||"visite";
+  const sections=getSections(type);
 
   useEffect(()=>{setOnline(navigator.onLine);const on=()=>setOnline(true);const off=()=>setOnline(false);window.addEventListener("online",on);window.addEventListener("offline",off);return()=>{window.removeEventListener("online",on);window.removeEventListener("offline",off)}},[]);
 
-  // Realtime listeners
   useEffect(()=>{
-    const u1=dbListen("missions/"+missionId+"/config",d=>{if(d){setCfg(d);cfgRef.current=d}});
-    const u2=dbListen("messages/"+missionId,d=>{
-      if(!d){setMsgs([]);return}
-      const list=Object.values(d).sort((a,b)=>a.time-b.time);
-      setMsgs(list);
-    });
-    const u3=dbListen("reports/"+missionId,d=>{if(d){setRpt(d);rptRef.current=d}});
-    // Presence
+    const u1=dbOn("missions/"+missionId+"/config",d=>{if(d){setCfg(d);cfgRef.current=d}});
+    const u2=dbOn("messages/"+missionId,d=>{if(!d){setMsgs([]);return}setMsgs(Object.values(d).sort((a,b)=>a.time-b.time))});
+    const u3=dbOn("reports/"+missionId,d=>{if(d){setRpt(d);rptRef.current=d}});
     const ot=user.role==="A"?"B":"A";
-    const u4=dbListen("presence/"+missionId+"/"+ot,d=>{
-      setOtherP(d&&Date.now()-d.ts<15000?{online:true,name:d.name}:{online:false,name:d?.name});
-    });
-    // Own presence heartbeat
+    const u4=dbOn("presence/"+missionId+"/"+ot,d=>{setOtherP(d&&Date.now()-d.ts<15000?{online:true,name:d.name}:{online:false,name:d?.name})});
     const hb=setInterval(()=>{dbSet("presence/"+missionId+"/"+user.role,{name:user.name,ts:Date.now()})},5000);
     dbSet("presence/"+missionId+"/"+user.role,{name:user.name,ts:Date.now()});
     return()=>{u1();u2();u3();u4();clearInterval(hb)};
@@ -264,40 +255,42 @@ function MissionChat({user,missionId,onBack}){
 
   useEffect(()=>{endRef.current?.scrollIntoView({behavior:"smooth"})},[msgs]);
 
+  const delMsg=async id=>{if(!confirm("Supprimer ce message ?"))return;await dbDel("messages/"+missionId+"/"+id)};
+
   const handleSend=async()=>{
     if(!inp.trim()||busy)return;
     const text=inp.trim();setInp("");setBusy(true);
     const id=user.role+"-"+Date.now()+"-"+Math.random().toString(36).slice(2,6);
     const msg={id,text,sender:user.role,senderName:user.name,time:Date.now(),status:"processing",corrected:"",section:""};
-    // Write to Firebase immediately
     await dbSet("messages/"+missionId+"/"+id,msg);
     try{
-      const ai=await callAI(text,rptRef.current,cfgRef.current);
+      const secs=getSections(cfgRef.current.type||"visite");
+      const ai=await callAI(text,rptRef.current,cfgRef.current,secs);
       if(ai){
         await dbSet("messages/"+missionId+"/"+id,{...msg,status:"done",corrected:ai.corrected,section:ai.section});
-        const newRpt={...rptRef.current,[ai.section]:rptRef.current[ai.section]?rptRef.current[ai.section]+"\n"+ai.report_addition:ai.report_addition};
-        await dbSet("reports/"+missionId,newRpt);
+        const nr={...rptRef.current,[ai.section]:rptRef.current[ai.section]?rptRef.current[ai.section]+"\n"+ai.report_addition:ai.report_addition};
+        await dbSet("reports/"+missionId,nr);
         await dbSet("missions/"+missionId+"/updatedAt",Date.now());
         await dbSet("missions/"+missionId+"/msgCount",(msgs.length+1));
       }
-    }catch(e){
-      console.error(e);
-      await dbSet("messages/"+missionId+"/"+id,{...msg,status:"error"});
-    }
+    }catch(e){console.error(e);await dbSet("messages/"+missionId+"/"+id,{...msg,status:"error"})}
     setBusy(false);
   };
-  const delMsg=async(id)=>{if(!confirm("Supprimer ce message ?"))return;await dbDel("messages/"+missionId+"/"+id)};
+
   const saveSec=async(k,v)=>{const n={...rptRef.current,[k]:v};rptRef.current=n;await dbSet("reports/"+missionId,n)};
   const saveCfg=async nc=>{cfgRef.current=nc;await dbSet("missions/"+missionId+"/config",nc)};
-  const filled=SECTIONS.filter(s=>rpt[s.key]);const prog=Math.round(filled.length/SECTIONS.length*100);
-  const gL=k=>SECTIONS.find(s=>s.key===k)?.label||k;const gI=k=>SECTIONS.find(s=>s.key===k)?.icon||"📝";
+  const filled=sections.filter(s=>rpt[s.key]);const prog=Math.round(filled.length/sections.length*100);
+  const gL=k=>sections.find(s=>s.key===k)?.label||k;const gI=k=>sections.find(s=>s.key===k)?.icon||"📝";
   const sI=s=>s==="done"?<span style={{color:C.grn,fontSize:10}}>✓✓</span>:s==="processing"?<span style={{fontSize:10,animation:"pulse 1s infinite",color:C.gold}}>●</span>:<span style={{color:C.red,fontSize:10}}>⚠</span>;
 
   return(<div style={{width:"100%",maxWidth:480,margin:"0 auto",height:"100dvh",display:"flex",flexDirection:"column",background:C.bg,color:C.txt,overflow:"hidden"}}>
     <div style={{background:"linear-gradient(135deg,"+C.srf+",#0f1729)",borderBottom:"1px solid "+C.brdG,padding:"10px 12px 8px",flexShrink:0}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         <button onClick={onBack} style={{background:"rgba(255,255,255,0.04)",border:"1px solid "+C.brd,borderRadius:9,color:C.gold,width:34,height:34,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>←</button>
-        <div style={{flex:1,minWidth:0}}><div style={{fontSize:14,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>{cfg.title}<div style={{width:7,height:7,borderRadius:"50%",background:online?C.grn:C.org,flexShrink:0}}/></div><div style={{fontSize:10,color:C.txtD}}>{user.name+(otherP?.online?" · "+otherP.name+" en ligne":"")}</div></div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:700,display:"flex",alignItems:"center",gap:6}}>{(type==="hebdo"?"📊":"📋")+" "+cfg.title}<div style={{width:7,height:7,borderRadius:"50%",background:online?C.grn:C.org,flexShrink:0}}/></div>
+          <div style={{fontSize:10,color:C.txtD}}>{TEMPLATE_LABELS[type]+" · "+user.name+(otherP?.online?" · "+otherP.name:"")}</div>
+        </div>
         <button onClick={()=>setShowCfg(!showCfg)} style={{background:showCfg?C.goldD:"rgba(255,255,255,0.03)",border:"1px solid "+C.brdG,borderRadius:9,color:C.gold,width:34,height:34,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,flexShrink:0}}>⚙</button>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}><div style={{flex:1,height:3,background:C.brd,borderRadius:2,overflow:"hidden"}}><div style={{width:prog+"%",height:"100%",borderRadius:2,background:"linear-gradient(90deg,"+C.gold+","+C.goldL+")",transition:"width 0.6s"}}/></div><span style={{fontSize:9,fontFamily:"'JetBrains Mono',monospace",color:C.gold}}>{prog+"%"}</span></div>
@@ -310,20 +303,20 @@ function MissionChat({user,missionId,onBack}){
     </div>
     <div style={{flex:1,overflow:"auto",background:view==="preview"?"#d0ccc4":"transparent"}}>
       {view==="chat"&&<div style={{padding:"10px 10px 4px"}}>
-        {msgs.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:C.txtM}}><div style={{fontSize:36,marginBottom:8}}>💬</div><div style={{fontSize:13,fontWeight:600,color:C.txtD}}>Début de la mission</div></div>}
+        {msgs.length===0&&<div style={{textAlign:"center",padding:"40px 20px",color:C.txtM}}><div style={{fontSize:36,marginBottom:8}}>💬</div><div style={{fontSize:13,fontWeight:600,color:C.txtD}}>{"Début — "+TEMPLATE_LABELS[type]}</div></div>}
         {msgs.map(m=>{const me=m.sender===user.role;const uc=UC[m.sender]||UC.A;return<div key={m.id} style={{marginBottom:9,animation:"fadeUp .3s ease"}}>
           {!me&&<div style={{fontSize:9.5,fontWeight:600,color:uc.ac,marginBottom:2,marginLeft:4}}>{m.senderName}</div>}
-          <div style={{display:"flex",justifyContent:me?"flex-end":"flex-start"}}><div style={{background:uc.bg,borderRadius:me?"12px 12px 3px 12px":"12px 12px 12px 3px",padding:"8px 11px",maxWidth:"80%",fontSize:12.5,lineHeight:1.5}}>{m.text}<div style={{fontSize:8.5,color:"rgba(255,255,255,0.2)",marginTop:2,textAlign:me?"right":"left",display:"flex",alignItems:"center",justifyContent:me?"flex-end":"flex-start",gap:3}}>{new Date(m.time).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}{me&&sI(m.status)}{<span onClick={(e)=>{e.stopPropagation();delMsg(m.id)}} style={{marginLeft:4,cursor:"pointer",opacity:0.3,fontSize:10}}>🗑</span>}</div></div></div>
+          <div style={{display:"flex",justifyContent:me?"flex-end":"flex-start"}}><div style={{background:uc.bg,borderRadius:me?"12px 12px 3px 12px":"12px 12px 12px 3px",padding:"8px 11px",maxWidth:"80%",fontSize:12.5,lineHeight:1.5}}>{m.text}<div style={{fontSize:8.5,color:"rgba(255,255,255,0.2)",marginTop:2,textAlign:me?"right":"left",display:"flex",alignItems:"center",justifyContent:me?"flex-end":"flex-start",gap:3}}>{new Date(m.time).toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"})}{me&&sI(m.status)}{me&&<span onClick={e=>{e.stopPropagation();delMsg(m.id)}} style={{marginLeft:4,cursor:"pointer",opacity:0.3,fontSize:10}}>🗑</span>}</div></div></div>
           {m.status==="done"&&<div style={{display:"flex",justifyContent:me?"flex-end":"flex-start",marginTop:3}}><div style={{background:"rgba(255,255,255,0.02)",border:"1px solid "+C.brdG,borderRadius:9,padding:"5px 9px",maxWidth:"85%",fontSize:11}}><div style={{color:"#b0a99e",lineHeight:1.4}}><span style={{color:C.gold,fontWeight:600}}>✓ </span>{m.corrected}</div><div style={{marginTop:3,display:"inline-flex",alignItems:"center",gap:3,background:C.goldD,borderRadius:6,padding:"1px 6px",fontSize:9.5,color:C.gold,fontWeight:500}}>{gI(m.section)+" "+gL(m.section)}</div></div></div>}
           {m.status==="processing"&&<div style={{display:"flex",justifyContent:me?"flex-end":"flex-start",marginTop:3}}><div style={{background:"rgba(255,255,255,0.02)",border:"1px solid "+C.brdG,borderRadius:9,padding:"4px 9px",fontSize:10.5,color:C.gold}}><span style={{animation:"pulse 1.2s infinite"}}>● </span>Analyse...</div></div>}
         </div>})}
         <div ref={endRef}/>
       </div>}
       {view==="report"&&<div style={{padding:10}}>
-        <div style={{background:"linear-gradient(135deg,"+C.goldD+",rgba(212,164,74,0.02))",border:"1px solid "+C.brdG,borderRadius:12,padding:14,marginBottom:10}}><div style={{fontSize:16,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{cfg.title}</div><div style={{fontSize:11,color:C.txtD,marginTop:3}}>✏️ Cliquez pour modifier</div></div>
-        {SECTIONS.map(s=><EditSec key={s.key} sec={s} content={rpt[s.key]} onSave={saveSec}/>)}
+        <div style={{background:"linear-gradient(135deg,"+C.goldD+",rgba(212,164,74,0.02))",border:"1px solid "+C.brdG,borderRadius:12,padding:14,marginBottom:10}}><div style={{fontSize:16,fontWeight:700,fontFamily:"'Playfair Display',serif"}}>{cfg.title}</div><div style={{fontSize:11,color:C.txtD,marginTop:3}}>{"✏️ "+TEMPLATE_LABELS[type]+" — Cliquez pour modifier"}</div></div>
+        {sections.map(s=><EditSec key={s.key} sec={s} content={rpt[s.key]||""} onSave={saveSec}/>)}
       </div>}
-      {view==="preview"&&<WordPreview config={cfg} report={rpt} messages={msgs}/>}
+      {view==="preview"&&<WordPreview config={cfg} report={rpt} messages={msgs} type={type}/>}
     </div>
     {view==="chat"&&<div style={{flexShrink:0,background:C.srf,borderTop:"1px solid "+C.brd,padding:"9px 10px",paddingBottom:"max(9px, env(safe-area-inset-bottom))"}}>
       <div style={{display:"flex",gap:7,alignItems:"flex-end"}}>
@@ -339,18 +332,15 @@ function App(){
   const[user,setUser]=useState(()=>{try{return JSON.parse(localStorage.getItem("ms-user"))}catch{return null}});
   const[screen,setScreen]=useState(user?"missions":"login");
   const[mid,setMid]=useState(null);
-
   const login=(n,r)=>{const u={name:n,role:r};setUser(u);localStorage.setItem("ms-user",JSON.stringify(u));setScreen("missions")};
   const logout=()=>{setUser(null);localStorage.removeItem("ms-user");setScreen("login")};
   const go=id=>{setMid(id);setScreen("chat")};
   const back=()=>{setMid(null);setScreen("missions")};
-
   if(screen==="login"||!user)return<Login onLogin={login}/>;
   if(screen==="missions")return<MissionsList user={user} onSelect={go} onLogout={logout}/>;
   if(screen==="chat"&&mid)return<MissionChat user={user} missionId={mid} onBack={back}/>;
   return null;
 }
-
 ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 </script>
 </body>
